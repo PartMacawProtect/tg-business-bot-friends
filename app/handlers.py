@@ -18,8 +18,6 @@ def format_schedule(opening_hours) -> str:
         return "График работы свободный или не настроен."
 
     days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-
-    # Создаем пустую заготовку для каждого дня недели
     schedule_dict = {i: [] for i in range(7)}
 
     for interval in opening_hours.opening_hours:
@@ -33,7 +31,6 @@ def format_schedule(opening_hours) -> str:
 
         duration = interval.closing_minute - interval.opening_minute
 
-        # Если интервал длится 24 часа или больше и начинается в 00:00 — это Круглосуточно
         if duration >= 1440 and start_hour == 0 and start_min == 0:
             curr_day = start_day
             rem_duration = duration
@@ -51,7 +48,6 @@ def format_schedule(opening_hours) -> str:
             schedule_dict[start_day].append(f"с {start_hour:02d}:{start_min:02d}")
             schedule_dict[end_day].append(f"до {end_hour:02d}:{end_min:02d}")
 
-    # Собираем красивый текстовый график
     lines = []
     for i, day_name in enumerate(days):
         intervals = schedule_dict[i]
@@ -67,37 +63,50 @@ def format_schedule(opening_hours) -> str:
 
 @router.business_message()
 async def business_message_handler(message: Message):
-    # ПРОВЕРКА НА ВЛАДЕЛЬЦА: Если это сообщение написал ты сам, бот полностью его игнорирует
+    user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
+    
+    # ПРИНТ СТАРТА: Проверяем, видит ли бот сообщение вообще
+    print(f"\n[DEBUG] 📥 Бот поймал сообщение от {user_info}: '{message.text}'")
+
+    # 1. Проверка на ADMIN_ID
+    print(f"[DEBUG] Проверка 1: Сравниваем ID отправителя ({message.from_user.id}) и ADMIN_ID ({secrets.admin_id})")
     if message.from_user.id == secrets.admin_id:
+        print(f"[DEBUG] 🛑 Выход: Вы пишете со своего аккаунта администратора. Бот проигнорировал сообщение.")
+        return
+
+    # 2. Проверка на наличие бизнес-подключения
+    print(f"[DEBUG] Проверка 2: Наличие business_connection_id ({message.business_connection_id})")
+    if not message.business_connection_id:
+        print("[DEBUG] 🛑 Выход: Сообщение отправлено боту прямо в ЛС, а хендлер ждет сообщений из бизнес-чатов.")
         return
 
     try:
-        if not message.business_connection_id:
-            return
-
-        # 1. Получаем бизнес-соединение
+        print("[DEBUG] Проверка 3: Запрашиваем статус бизнес-соединения и часы работы...")
         business_conn = await bot.get_business_connection(business_connection_id=message.business_connection_id)
-
-        # 2. Получаем актуальные часы из чата
         chat_info = await bot.get_chat(chat_id=business_conn.user_chat_id)
         opening_hours = chat_info.business_opening_hours
 
+        if not opening_hours:
+            print("[DEBUG] 🛑 Выход: У бизнес-аккаунта не настроено рабочее время (opening_hours пуст).")
+            return
+
         # 3. Проверка времени работы
-        if not opening_hours or not check_opening_hours(opening_hours):
+        is_hours_match = check_opening_hours(opening_hours)
+        print(f"[DEBUG] Проверка 4: Результат check_opening_hours = {is_hours_match}")
+        
+        if not is_hours_match:
+            print("[DEBUG] 🛑 Выход: Условие check_opening_hours не выполнено (сейчас рабочее время или график не совпал).")
             return
 
     except Exception as e:
-        print(f"⚠️ Ошибка при проверке рабочих часов: {e}")
+        print(f"⚠️ [DEBUG] Ошибка в блоке проверки часов: {e}")
         return
 
     # --- РАБОТА В НЕРАБОЧЕЕ ВРЕМЯ ---
-    user_info = f"@{message.from_user.username}" if message.from_user.username else f"ID {message.from_user.id}"
-    print(f"📥 Нерабочее время! Сообщение от {user_info}: {message.text}")
-
-    # Генерируем полный текстовый график
+    print(f"[DEBUG] 🔥 Все проверки пройдены! Начинаем генерацию ответа через Groq...")
+    
     schedule_text = format_schedule(opening_hours)
 
-    # Определяем точный текущий день и время по часовому поясу из Telegram
     try:
         tz_name = opening_hours.time_zone_name if hasattr(opening_hours, "time_zone_name") else "UTC"
         tz = pytz.timezone(tz_name)
@@ -110,7 +119,7 @@ async def business_message_handler(message: Message):
     current_time = now.strftime("%H:%M")
 
     try:
-        print(f"🤖 Запрос в Groq API (Используем модель llama-3.3-70b)...")
+        print(f"🤖 Отправляем запрос в Groq API (Используем модель llama-3.3-70b)...")
         response = await client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
@@ -121,7 +130,6 @@ async def business_message_handler(message: Message):
         answer = response.choices[0].message.content
         print(f"🎯 Ответ от Groq получен: {answer}")
 
-        # Экранируем разметку Markdown
         safe_answer = answer.replace("_", "\\_")
 
         await bot.send_message(
