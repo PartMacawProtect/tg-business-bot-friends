@@ -8,10 +8,17 @@ dp = Dispatcher()
 dp.include_router(router)
 
 async def on_startup():
-    await bot.send_message(secrets.admin_id, start_bot_message())
+    try:
+        await bot.send_message(secrets.admin_id, start_bot_message())
+    except Exception as e:
+        print(f"⚠️ Не удалось отправить сообщение о запуске админу: {e}")
+        print("💡 Подсказка: зайдите в ТУ ОШИБКУ, которую выдает бот. Нужно открыть нового бота в Telegram и нажать /start.")
 
 async def on_shutdown():
-    await bot.send_message(secrets.admin_id, stop_bot_message())
+    try:
+        await bot.send_message(secrets.admin_id, stop_bot_message())
+    except Exception as e:
+        print(f"⚠️ Не удалось отправить сообщение об остановке админу: {e}")
 
 async def main():
     dp.startup.register(on_startup)
